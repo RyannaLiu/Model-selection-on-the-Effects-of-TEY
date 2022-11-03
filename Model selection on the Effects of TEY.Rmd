@@ -1,0 +1,200 @@
+---
+title: "4893 Capstone Project Appendix"
+author: "Yunhan Liu"
+date: "4/21/2022"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(readr)
+gt = read_csv("gt_2015.csv")
+head(gt)
+```
+
+I'd like to use Best subset selection, Shrinkage method: Ridge and Lasso regression perform well by evaluating adjusted R^2, C_p, BIC and find the main factors that affect the response. 
+
+```{r}
+# take a glance of the data
+hist(gt$TEY,col="pink",main='Distribution of Turbine energy yield',xlab="Turbine energy yield")
+```
+
+```{r}
+# to look at the correlation between the variables and the response to find which variables have relationship with the quality of red wine. 
+library(corrplot)
+library(RColorBrewer)
+M =cor(gt)
+corrplot(M, type="upper", order="FPC",col=brewer.pal(n=8, name="RdYlBu"),
+method="circle")
+```
+```{r}
+round(M,4)
+```
+It is clear that the effects that the variables may affect the quality(highest to lowest order) is alcohol, volatile.acidity, sulphates, citric.acid, total.sulfur.dioxide, density, chlorides, fixed.acidity, pH, free.sulfur.dioxide, residual.sugar. 
+
+
+Before I do the model selection, I did the assumption check for linear regression model.
+
+1. Check the linear relationship assumption and residuals are normally distributed
+```{r}
+#Using test to show the linearity and normality check
+par(mfrow=c(1,2))
+linear.full=lm(TEY~.,data=gt)
+plot(linear.full,which=c(1,2))
+```
+
+```{r}
+library(MASS)
+boxcox(linear.full,seq(0.8,1,1/10))
+```
+The boxcox plot indicate $\lambda=0.85$, 
+
+```{r}
+par(mfrow=c(1,2))
+linear.full.trans=lm(TEY^0.85~.,data=gt)
+plot(linear.full.trans,which=c(1,2))
+```
+
+Also, in order to avoid multi-colinearity within the different factors, I check the VIF value of all factors.
+
+```{r}
+library(car)
+vif(linear.full.trans)
+```
+```{r}
+gt.no.1=subset(gt, select = -c(TIT,AFDP,GTEP) )
+linear.no1.trans=lm(TEY^0.85~.,data=gt.no.1)
+vif(linear.no1.trans)
+```
+```{r}
+new=gt.no.1
+```
+
+# Best subset selection
+Choose the best model according to adjust $R^2$, BIC, and $C_p$.
+
+```{r}
+library(glmnet)
+set.seed(4893)
+n = nrow(new)
+train_lst = sample(1:n, floor(0.8*n))
+train=new[train_lst,]
+test=new[-train_lst,]
+x = model.matrix(TEY^0.85 ~ ., new)[, -1]
+y = (new$TEY)^0.85
+```
+
+
+```{r}
+library(leaps)
+regfit.full=regsubsets(TEY^0.85~.,data=train)
+regfit.summary=summary(regfit.full)
+regfit.summary
+```
+```{r}
+names(regfit.summary)
+```
+```{r}
+which.max(regfit.summary$adjr2)
+which.min(regfit.summary$cp)
+which.min(regfit.summary$bic)
+```
+```{r}
+par(mfrow = c(1, 2))
+plot(regfit.summary$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+points(6, regfit.summary$adjr2[6], col = "red", cex = 2,pch=20)
+```
+```{r}
+par(mfrow = c(1, 2))
+plot(regfit.summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+points(6, regfit.summary$cp[6], col = "red", cex = 2,pch=20)
+plot(regfit.summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+points(6, regfit.summary$bic[6], col = "red", cex = 2,pch=20)
+```
+Best model needs to include 8 variables namely, volatile.acidity, citric.acid, free.sulfur.dioxide, chlorides, total.sulfur.dioxide, pH, sulphates, alcohol.
+
+
+```{r}
+coef(regfit.full, 6)
+```
+
+```{r}
+mod.6.train=lm(TEY^0.85~AT+AP+AH+CDP+TAT+CO, data=train)
+bss.pred = predict(mod.6.train,  newx = test)
+mean((bss.pred - test$TEY^0.85)^2)/nrow(test)
+```
+
+# Ridge Regression
+
+```{r}
+grid = 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = grid)
+cv.out_r <- cv.glmnet(x[train_lst, ], y[train_lst], alpha = 0) 
+```
+
+```{r}
+plot(cv.out_r)
+```
+
+```{r}
+plot(ridge.mod,xlab="lambda")
+```
+
+```{r}
+bestlam_r <- cv.out_r$lambda.min;bestlam_r
+```
+```{r}
+reg.pred <- predict(ridge.mod, s = bestlam_r, newx = x[-train_lst, ])
+mean((reg.pred - test$TEY^0.85)^2)/nrow(test)
+```
+```{r}
+reg.coef = predict.glmnet(ridge.mod, type = "coefficients",s =bestlam_r)[1:8,]
+reg.coef
+```
+
+# Lasso
+
+
+```{r}
+lasso.mod = glmnet(x, y, alpha = 1,lambda = grid)
+plot(lasso.mod,xlab="lambda")
+```
+
+```{r}
+set.seed(4052)
+cv.lasso =cv.glmnet(x, y, alpha = 1, lambda = grid, type.measure = "mse")
+```
+```{r}
+plot(cv.lasso)
+```
+
+```{r}
+best_lambda_l = cv.lasso$lambda.min; best_lambda_l
+```
+```{r}
+lasso.coef = predict.glmnet(lasso.mod, type = "coefficients",s =best_lambda_l)[1:8,]
+lasso.coef
+```
+
+```{r}
+lasso.pred = predict(lasso.mod, s = best_lambda_l, newx = x[-train_lst, ])
+mean((lasso.pred - test$TEY^0.85)^2)/nrow(test)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
